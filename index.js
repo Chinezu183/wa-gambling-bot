@@ -5,65 +5,61 @@ import makeWASocket, {
 import pino from "pino"
 import readline from "readline"
 
+const PREFIX = "."
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 })
 
-let pairingInProgress = false
+let askedNumber = false
 
 async function startBot() {
   console.log("📱 Pornire bot WhatsApp...")
 
-  // folosește folder auth/ pentru login
   const { state, saveCreds } = await useMultiFileAuthState("./auth")
 
   const sock = makeWASocket({
-    logger: pino({ level: "silent" }),
     auth: state,
+    logger: pino({ level: "silent" }),
     printQRInTerminal: false
   })
 
   sock.ev.on("creds.update", saveCreds)
 
-  // 🔑 Pairing code – doar o dată
-  if (!state.creds.registered && !pairingInProgress) {
-    pairingInProgress = true
-
-    rl.question("📱 Număr WhatsApp (ex: 40xxxxxxxxx): ", async (number) => {
+  // 🔐 Pairing code (o singură dată)
+  if (!state.creds.registered && !askedNumber) {
+    askedNumber = true
+    rl.question("📱 Număr WhatsApp (ex: 40xxxxxxxxx): ", async (num) => {
       try {
-        const code = await sock.requestPairingCode(number.trim())
+        const code = await sock.requestPairingCode(num.trim())
         console.log("\n🔑 COD DE CONECTARE:", code)
         console.log("👉 WhatsApp → Setări → Dispozitive conectate → Conectare cu cod\n")
-      } catch (err) {
-        console.log("❌ Eroare pairing:", err.message)
+      } catch (e) {
+        console.log("❌ Eroare pairing:", e.message)
       }
     })
   }
 
-  // 🔄 Update conexiune
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect } = update
 
     if (connection === "open") {
-      console.log("✅ BOT CONECTAT LA WHATSAPP")
-      pairingInProgress = false
-      rl.close()
+      console.log("✅ BOT CONECTAT CU SUCCES LA WHATSAPP")
     }
 
     if (connection === "close") {
-      const statusCode = lastDisconnect?.error?.output?.statusCode
-
-      if (statusCode === DisconnectReason.loggedOut) {
-        console.log("❌ Logout – șterge auth/ și reconectează manual")
+      const reason = lastDisconnect?.error?.output?.statusCode
+      if (reason === DisconnectReason.loggedOut) {
+        console.log("❌ LOGOUT DETECTAT – șterge folderul auth și reconectează")
       } else {
-        console.log("⚠️ Conexiune pierdută, aștept...")
-        // ❌ NU mai apelăm startBot() aici ca să evităm loop
+        console.log("⚠️ Conexiune pierdută, reconectare automată...")
+        startBot()
       }
     }
   })
 
-  // 📩 COMENZI DE TEST
+  // 📩 Mesaje
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0]
     if (!msg?.message || msg.key.fromMe) return
@@ -74,33 +70,30 @@ async function startBot() {
       msg.message.extendedTextMessage?.text ||
       ""
 
-    if (!text.startsWith(".")) return
+    if (!text.startsWith(PREFIX)) return
 
-    // Comenzi simple de test
-    if (text === ".ping") {
+    const cmd = text.slice(1).toLowerCase()
+
+    if (cmd === "ping") {
       await sock.sendMessage(jid, { text: "🏓 Pong! Bot online." })
     }
 
-    if (text === ".menu") {
+    if (cmd === "menu") {
       await sock.sendMessage(jid, {
-        text: `
-🎰 *GAMBLING BOT*
-.ping - testează conexiunea
-.menu - vezi acest meniu
+        text:
+`🎰 *FAKE GAMBLING BOT*
 
-✅ Urmează să fie integrate:
-.coinflip
-.dice
-.slots
-.blackjack
-.daily
-.work
-.admin
-`
+• .ping – test bot
+• .menu – acest meniu
+
+🔒 Sistem sigur
+👮 Admin ready
+💰 Monede false
+🍀 Luck boost
+⚙️ Termux compatible`
       })
     }
   })
 }
 
-// PORNEȘTE BOTUL
 startBot()
